@@ -393,8 +393,14 @@ class FolderSemanticConfigTests(unittest.TestCase):
 
     def test_mlflow_configs_parse_with_expected_logger_values(self) -> None:
         configs = [
-            (BASE_MLFLOW_CONFIG_PATH, "rhcorn_10cm_485_0617326_base"),
-            (LARGE_MLFLOW_CONFIG_PATH, "rhcorn_10cm_485_0617326_large"),
+            (
+                BASE_MLFLOW_CONFIG_PATH,
+                "folder_semantic_eomt_base_1280_dinov3",
+            ),
+            (
+                LARGE_MLFLOW_CONFIG_PATH,
+                "folder_semantic_eomt_large_1280_dinov3",
+            ),
         ]
 
         for config_path, run_name in configs:
@@ -407,8 +413,7 @@ class FolderSemanticConfigTests(unittest.TestCase):
                 )
                 self.assertIn(
                     "experiment_name: "
-                    "/Workspace/Shared/mlflow_experiments/rhcorn/"
-                    "rhcorn_10cm_485_060326/eomt",
+                    "/Workspace/Shared/mlflow_experiments/eomt/experiment",
                     output,
                 )
                 self.assertIn(f"run_name: {run_name}", output)
