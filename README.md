@@ -145,6 +145,40 @@ To fine-tune a pre-trained EoMT model, add:
 
 > **DINOv3 Models**: When using DINOv3-based configurations, the code expects delta weights relative to DINOv3 weights by default. To disable this behavior and use absolute weights instead, add `--model.delta_weights False`. 
 
+### Folder-Semantic MLflow Configs
+
+Generate a dataset-specific DINOv3 MLflow config from the checked-in base or
+large template:
+
+```bash
+python3 -m scripts.generate_folder_semantic_mlflow_config \
+  --model-size large \
+  --dataset-path /path/to/folder-semantic-dataset \
+  --num-epochs 35 \
+  --batch-size 2 \
+  --image-size 1280 \
+  --num-classes 3 \
+  --mlflow-experiment-path /Workspace/Shared/mlflow_experiments/eomt/experiment \
+  --mlflow-run-name folder-semantic-large \
+  --output configs/dinov3/folder/semantic/my_large_mlflow.yaml
+```
+
+The utility validates and counts the paired samples under `train/Images` and
+`train/Masks`, calculates the global-step annealing and warmup schedules, and
+writes the dataset path and training parameters into the generated config.
+Existing output files are protected by default; pass `--force` to replace one.
+
+Train with the generated config:
+
+```bash
+python3 main.py fit \
+  -c configs/dinov3/folder/semantic/my_large_mlflow.yaml
+```
+
+The schedule calculation assumes one device, no gradient accumulation, and
+the configured batch size. Generate a new config whenever the training dataset
+size, batch size, or epoch count changes.
+
 ### Evaluating
 
 To evaluate a pre-trained EoMT model, run:
