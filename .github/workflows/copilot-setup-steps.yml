@@ -1,0 +1,48 @@
+name: Copilot Setup Steps
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v6
+
+      # Mints a 1-hour installation token from the apbot-bok-reader
+      # GitHub App (read-only access to agerpoint/bok). See standards/ticket-to-pr-setup.md §2.
+      - name: Mint BOK reader token
+        id: bok-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.BOK_READER_APP_ID }}
+          private-key: ${{ secrets.BOK_READER_APP_PRIVATE_KEY }}
+          owner: agerpoint
+          repositories: bok
+
+      - name: Checkout Agerpoint BOK
+        uses: actions/checkout@v6
+        with:
+          repository: agerpoint/bok
+          token: ${{ steps.bok-token.outputs.token }}
+          # Temporary location; moved to ~/agerpoint/bok/ in the next step.
+          path: _bok_checkout
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup agent standards
+        env:
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          mkdir -p "$HOME/agerpoint"
+          mv "$GITHUB_WORKSPACE/_bok_checkout" "$HOME/agerpoint/bok"
+          ln -s "$GITHUB_WORKSPACE" "$HOME/agerpoint/${REPO_NAME}"
+          # The following two lines are for debugging purposes.
+          echo "BOK HEAD:    $(git -C "$HOME/agerpoint/bok" rev-parse --short HEAD)"
+          echo "Repo linked: $HOME/agerpoint/${REPO_NAME} -> $GITHUB_WORKSPACE"

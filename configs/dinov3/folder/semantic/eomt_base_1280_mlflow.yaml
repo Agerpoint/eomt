@@ -1,0 +1,40 @@
+trainer:
+  max_epochs: 16
+  logger:
+    class_path: lightning.pytorch.loggers.MLFlowLogger
+    init_args:
+      experiment_name: "/Workspace/Shared/mlflow_experiments/eomt/experiment"
+      run_name: "folder_semantic_eomt_base_1280_dinov3"
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: "metrics/val_iou_all"
+        mode: max
+        save_top_k: 1
+        filename: "best-{epoch}-{metrics/val_iou_all:.4f}"
+        auto_insert_metric_name: False
+model:
+  class_path: training.mask_classification_semantic.MaskClassificationSemantic
+  init_args:
+    attn_mask_annealing_enabled: True
+    attn_mask_annealing_start_steps: [0, 8150, 13040]
+    attn_mask_annealing_end_steps: [3000, 11410, 16300]
+    lr: 2e-4
+    llrd_l2_enabled: False
+    warmup_steps: [2000, 3000]
+    delta_weights: False
+    network:
+      class_path: models.eomt.EoMT
+      init_args:
+        num_q: 100
+        num_blocks: 3
+        encoder:
+          class_path: models.vit.ViT
+          init_args:
+            backbone_name: facebook/dinov3-vitb16-pretrain-lvd1689m
+data:
+  class_path: datasets.folder_semantic.FolderSemantic
+  init_args:
+    img_size: [1280, 1280]
+    num_classes: 2
+    check_empty_targets: False
