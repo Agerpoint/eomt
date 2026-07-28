@@ -15,6 +15,12 @@ import yaml
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIRECTORY = REPOSITORY_ROOT / "configs" / "dinov3" / "folder" / "semantic"
 DEFAULT_CHECKPOINT_DIRECTORY = "/local_disk0/eomt_checkpoints"
+CHECKPOINT_CALLBACK_CLASS_PATHS = frozenset(
+    {
+        "lightning.pytorch.callbacks.ModelCheckpoint",
+        "training.mlflow_best_checkpoint.MLFlowBestCheckpoint",
+    }
+)
 IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".tif", ".tiff"})
 MASK_SUFFIXES = frozenset({".png"})
 ModelSize = Literal["base", "large"]
@@ -328,10 +334,7 @@ def _apply_overrides(
 def _set_checkpoint_directory(trainer: dict[str, Any]) -> None:
     callbacks = trainer.get("callbacks", [])
     for callback in callbacks:
-        if (
-            callback.get("class_path")
-            == "lightning.pytorch.callbacks.ModelCheckpoint"
-        ):
+        if callback.get("class_path") in CHECKPOINT_CALLBACK_CLASS_PATHS:
             callback["init_args"]["dirpath"] = DEFAULT_CHECKPOINT_DIRECTORY
             return
 

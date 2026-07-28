@@ -412,6 +412,11 @@ class FolderSemanticConfigTests(unittest.TestCase):
                     output,
                 )
                 self.assertIn(
+                    "class_path: training.mlflow_best_checkpoint."
+                    "MLFlowBestCheckpoint",
+                    output,
+                )
+                self.assertIn(
                     "experiment_name: "
                     "/Workspace/Shared/mlflow_experiments/eomt/experiment",
                     output,

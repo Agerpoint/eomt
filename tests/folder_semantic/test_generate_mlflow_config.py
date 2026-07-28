@@ -151,7 +151,12 @@ class MlflowConfigGeneratorTests(unittest.TestCase):
         logger = config["trainer"]["logger"]["init_args"]
         self.assertEqual(logger["experiment_name"], "/Workspace/Shared/test")
         self.assertEqual(logger["run_name"], "test-run")
-        checkpoint = config["trainer"]["callbacks"][0]["init_args"]
+        checkpoint_callback = config["trainer"]["callbacks"][0]
+        self.assertEqual(
+            checkpoint_callback["class_path"],
+            "training.mlflow_best_checkpoint.MLFlowBestCheckpoint",
+        )
+        checkpoint = checkpoint_callback["init_args"]
         self.assertEqual(
             checkpoint["dirpath"],
             "/local_disk0/eomt_checkpoints",
