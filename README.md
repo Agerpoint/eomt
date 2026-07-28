@@ -175,6 +175,12 @@ python3 main.py fit \
   -c configs/dinov3/folder/semantic/my_large_mlflow.yaml
 ```
 
+Whenever the monitored validation IoU improves, the full Lightning checkpoint
+remains in the configured checkpoint directory for training resume and a
+CPU-loaded state dictionary is saved locally as `best.pt`. The same `best.pt`
+is uploaded at the root of the MLflow run's artifacts, replacing the previous
+best artifact.
+
 The schedule calculation assumes one device, no gradient accumulation, and
 the configured batch size. Generate a new config whenever the training dataset
 size, batch size, or epoch count changes.

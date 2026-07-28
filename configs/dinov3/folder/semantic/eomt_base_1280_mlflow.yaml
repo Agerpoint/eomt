@@ -6,7 +6,7 @@ trainer:
       experiment_name: "/Workspace/Shared/mlflow_experiments/eomt/experiment"
       run_name: "folder_semantic_eomt_base_1280_dinov3"
   callbacks:
-    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    - class_path: training.mlflow_best_checkpoint.MLFlowBestCheckpoint
       init_args:
         monitor: "metrics/val_iou_all"
         mode: max
