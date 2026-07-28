@@ -8,6 +8,7 @@
 import os
 import subprocess
 import sys
+import textwrap
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -22,6 +23,36 @@ from scripts.generate_folder_semantic_mlflow_config import (
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
+
+class GeneratorImportTests(unittest.TestCase):
+    def test_import_does_not_require_datasets_package(self) -> None:
+        """The generator imports when every datasets import is blocked."""
+        script = textwrap.dedent(
+            """
+            import builtins
+
+            original_import = builtins.__import__
+
+            def guarded_import(name, *args, **kwargs):
+                if name == "datasets" or name.startswith("datasets."):
+                    raise AssertionError(f"unexpected import: {name}")
+                return original_import(name, *args, **kwargs)
+
+            builtins.__import__ = guarded_import
+            import scripts.generate_folder_semantic_mlflow_config
+            """
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=REPOSITORY_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 class TrainingScheduleTests(unittest.TestCase):
@@ -120,6 +151,11 @@ class MlflowConfigGeneratorTests(unittest.TestCase):
         logger = config["trainer"]["logger"]["init_args"]
         self.assertEqual(logger["experiment_name"], "/Workspace/Shared/test")
         self.assertEqual(logger["run_name"], "test-run")
+        checkpoint = config["trainer"]["callbacks"][0]["init_args"]
+        self.assertEqual(
+            checkpoint["dirpath"],
+            "/local_disk0/eomt_checkpoints",
+        )
 
         model = config["model"]["init_args"]
         self.assertEqual(model["attn_mask_annealing_start_steps"], [0, 2, 4, 6])
@@ -212,6 +248,28 @@ class MlflowConfigGeneratorTests(unittest.TestCase):
                 dataset_path=dataset_root,
                 output_path=output_path,
             )
+
+        self.assertFalse(output_path.exists())
+
+    def test_rejects_unsupported_training_files(self) -> None:
+        """Unsupported files fail structural validation before output is written."""
+        unsupported_path = self.dataset_root / "train" / "Images" / "notes.txt"
+        unsupported_path.write_text("not an image", encoding="utf-8")
+        output_path = self.root / "unsupported-file.yaml"
+
+        with self.assertRaisesRegex(ValueError, "Unsupported image file extension"):
+            self._generate(output_path=output_path)
+
+        self.assertFalse(output_path.exists())
+
+    def test_rejects_duplicate_training_stems(self) -> None:
+        """Duplicate image stems fail validation before output is written."""
+        duplicate_path = self.dataset_root / "train" / "Images" / "sample-0.jpg"
+        self._write_image(duplicate_path)
+        output_path = self.root / "duplicate-stem.yaml"
+
+        with self.assertRaisesRegex(ValueError, "Duplicate image filename stem"):
+            self._generate(output_path=output_path)
 
         self.assertFalse(output_path.exists())
 

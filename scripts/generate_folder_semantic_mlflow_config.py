@@ -12,10 +12,11 @@ from typing import Any, Literal
 
 import yaml
 
-from datasets.folder_semantic import FolderSemanticDataset
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIRECTORY = REPOSITORY_ROOT / "configs" / "dinov3" / "folder" / "semantic"
+DEFAULT_CHECKPOINT_DIRECTORY = "/local_disk0/eomt_checkpoints"
+IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".tif", ".tiff"})
+MASK_SUFFIXES = frozenset({".png"})
 ModelSize = Literal["base", "large"]
 
 
@@ -70,7 +71,7 @@ def compute_schedule(
     rounded upward.
 
     Args:
-        num_train_images: Number of validated samples in the training split.
+        num_train_images: Number of paired samples in the training split.
         batch_size: Per-step batch size for single-device training.
         num_epochs: Number of complete training epochs.
         num_blocks: Number of query-processing blocks to anneal.
@@ -189,7 +190,7 @@ def _prepare_config(
     _validate_destination(destination, force)
 
     dataset_root = Path(dataset_path).expanduser().resolve()
-    num_train_images = _count_training_images(dataset_root, num_classes)
+    num_train_images = _count_training_images(dataset_root)
     schedule = compute_schedule(
         num_train_images=num_train_images,
         batch_size=batch_size,
@@ -235,14 +236,63 @@ def _validate_parameters(
     _require_text("mlflow_run_name", mlflow_run_name)
 
 
-def _count_training_images(dataset_root: Path, num_classes: int) -> int:
-    train_dataset = FolderSemanticDataset(
-        image_dir=dataset_root / "train" / "Images",
-        mask_dir=dataset_root / "train" / "Masks",
-        num_classes=num_classes,
-        check_empty_targets=False,
+def _count_training_images(dataset_root: Path) -> int:
+    train_root = dataset_root / "train"
+    images = _files_by_stem(
+        train_root / "Images",
+        IMAGE_SUFFIXES,
+        "image",
     )
-    return len(train_dataset)
+    masks = _files_by_stem(
+        train_root / "Masks",
+        MASK_SUFFIXES,
+        "mask",
+    )
+
+    missing_masks = sorted(images.keys() - masks.keys())
+    missing_images = sorted(masks.keys() - images.keys())
+    if missing_masks or missing_images:
+        details = []
+        if missing_masks:
+            details.append(f"images without masks: {', '.join(missing_masks)}")
+        if missing_images:
+            details.append(f"masks without images: {', '.join(missing_images)}")
+        raise ValueError(
+            f"Image/mask pairing failed for {train_root}: " + "; ".join(details)
+        )
+
+    if not images:
+        raise ValueError(f"No image/mask pairs found in {train_root}")
+
+    return len(images)
+
+
+def _files_by_stem(
+    directory: Path,
+    allowed_suffixes: frozenset[str],
+    kind: str,
+) -> dict[str, Path]:
+    if not directory.is_dir():
+        raise ValueError(f"Required {kind} directory does not exist: {directory}")
+
+    files_by_stem = {}
+    for path in sorted(directory.iterdir()):
+        if path.is_dir():
+            raise ValueError(
+                f"Subdirectories are not supported in {kind} directory: {path}"
+            )
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in allowed_suffixes:
+            raise ValueError(f"Unsupported {kind} file extension: {path}")
+        if path.stem in files_by_stem:
+            raise ValueError(
+                f"Duplicate {kind} filename stem '{path.stem}' in {directory}"
+            )
+
+        files_by_stem[path.stem] = path
+
+    return files_by_stem
 
 
 def _apply_overrides(
@@ -265,6 +315,7 @@ def _apply_overrides(
     trainer["max_epochs"] = num_epochs
     logger["experiment_name"] = mlflow_experiment_path
     logger["run_name"] = mlflow_run_name
+    _set_checkpoint_directory(trainer)
     model["attn_mask_annealing_start_steps"] = list(schedule.annealing_starts)
     model["attn_mask_annealing_end_steps"] = list(schedule.annealing_ends)
     model["warmup_steps"] = list(schedule.warmup)
@@ -272,6 +323,19 @@ def _apply_overrides(
     data["batch_size"] = batch_size
     data["img_size"] = [image_size, image_size]
     data["num_classes"] = num_classes
+
+
+def _set_checkpoint_directory(trainer: dict[str, Any]) -> None:
+    callbacks = trainer.get("callbacks", [])
+    for callback in callbacks:
+        if (
+            callback.get("class_path")
+            == "lightning.pytorch.callbacks.ModelCheckpoint"
+        ):
+            callback["init_args"]["dirpath"] = DEFAULT_CHECKPOINT_DIRECTORY
+            return
+
+    raise ValueError("Template is missing the ModelCheckpoint callback")
 
 
 def _load_template(template_path: Path) -> dict[str, Any]:
