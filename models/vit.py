@@ -22,6 +22,8 @@ class ViT(nn.Module):
     ):
         super().__init__()
 
+        self.backbone_name = backbone_name
+
         if "/" in backbone_name:
             self.backbone = self.transformers_to_timm(
                 AutoModel.from_pretrained(
