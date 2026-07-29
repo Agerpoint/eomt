@@ -5,10 +5,14 @@
 
 """Tests for MLflow best-checkpoint export and artifact behavior."""
 
+import sys
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import ModuleType, SimpleNamespace
 from typing import Any, cast
+from unittest.mock import patch
 
 import torch
 from lightning.pytorch import Trainer
@@ -25,6 +29,7 @@ from training.mlflow_best_checkpoint import (
 class _RecordingMlflowClient:
     def __init__(self) -> None:
         self.artifacts: list[dict[str, Any]] = []
+        self.tags: list[dict[str, Any]] = []
 
     def log_artifact(
         self,
@@ -42,6 +47,15 @@ class _RecordingMlflowClient:
                     map_location="cpu",
                     weights_only=True,
                 ),
+            }
+        )
+
+    def set_tag(self, run_id: str, key: str, value: Any) -> None:
+        self.tags.append(
+            {
+                "run_id": run_id,
+                "key": key,
+                "value": value,
             }
         )
 
@@ -64,6 +78,7 @@ class _FakeMLFlowLogger(MLFlowLogger):
     ) -> None:
         self._client = client
         self._fake_run_id = run_id
+        self._tracking_uri = "databricks"
 
     @property
     def experiment(self) -> _RecordingMlflowClient:
@@ -92,9 +107,100 @@ class _FakeTrainer:
         self.loggers = [] if logger is None else [logger]
         self.is_global_zero = is_global_zero
         self.global_step = 1
+        self.lightning_module = SimpleNamespace(
+            num_classes=2,
+            img_size=(512, 512),
+            network=SimpleNamespace(
+                encoder=SimpleNamespace(
+                    backbone_name=(
+                        "facebook/dinov3-vitl16-pretrain-lvd1689m"
+                    )
+                )
+            ),
+        )
 
     def save_checkpoint(self, filepath: str, weights_only: bool = False) -> None:
         torch.save(self.checkpoint, filepath)
+
+
+class _FakePythonModel:
+    pass
+
+
+class _FakeTensorSpec:
+    def __init__(self, dtype, shape, name) -> None:
+        self.dtype = dtype
+        self.shape = shape
+        self.name = name
+
+
+class _FakeSchema(list):
+    pass
+
+
+class _FakeModelSignature:
+    def __init__(self, inputs, outputs) -> None:
+        self.inputs = inputs
+        self.outputs = outputs
+
+
+class _FakePyfunc:
+    PythonModel = _FakePythonModel
+
+    def __init__(self) -> None:
+        self.logged_models: list[dict[str, Any]] = []
+
+    def log_model(self, **kwargs: Any) -> None:
+        self.logged_models.append(kwargs)
+
+
+class _FakeMlflow(ModuleType):
+    def __init__(self) -> None:
+        super().__init__("mlflow")
+        self.pyfunc = _FakePyfunc()
+        self.tracking_uris: list[str] = []
+        self.started_runs: list[str] = []
+        self._active_run = None
+
+    def set_tracking_uri(self, tracking_uri: str) -> None:
+        self.tracking_uris.append(tracking_uri)
+
+    def active_run(self):
+        return self._active_run
+
+    @contextmanager
+    def start_run(self, run_id: str):
+        self.started_runs.append(run_id)
+        previous_run = self._active_run
+        self._active_run = SimpleNamespace(info=SimpleNamespace(run_id=run_id))
+        try:
+            yield self._active_run
+        finally:
+            self._active_run = previous_run
+
+
+@contextmanager
+def _fake_mlflow_modules():
+    mlflow_module = _FakeMlflow()
+    signature_module = ModuleType("mlflow.models.signature")
+    signature_module.ModelSignature = _FakeModelSignature
+    schema_module = ModuleType("mlflow.types.schema")
+    schema_module.Schema = _FakeSchema
+    schema_module.TensorSpec = _FakeTensorSpec
+
+    modules = {
+        "mlflow": mlflow_module,
+        "mlflow.models": ModuleType("mlflow.models"),
+        "mlflow.models.signature": signature_module,
+        "mlflow.types": ModuleType("mlflow.types"),
+        "mlflow.types.schema": schema_module,
+    }
+    with patch.dict(sys.modules, modules):
+        sys.modules.pop("training.mlflow_model", None)
+        try:
+            yield mlflow_module
+        finally:
+            sys.modules.pop("training.mlflow_model", None)
 
 
 class ExportCheckpointTests(unittest.TestCase):
@@ -163,11 +269,13 @@ class MLFlowBestCheckpointTests(unittest.TestCase):
         self.client = _RecordingMlflowClient()
         self.logger = _FakeMLFlowLogger(self.client)
         self.callback = MLFlowBestCheckpoint(
+            class_names=["background", "leaf"],
             dirpath=self.root,
             monitor="metrics/val_iou_all",
             mode="max",
             save_top_k=1,
         )
+        self.callback.train_date = "07-29-2026"
 
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
@@ -175,12 +283,12 @@ class MLFlowBestCheckpointTests(unittest.TestCase):
     def test_logs_replacement_best_artifact_to_logger_run(self) -> None:
         trainer = _FakeTrainer(self._checkpoint(1.0), self.logger)
         first_checkpoint_path = self.root / "best-epoch-1.ckpt"
-        self._save_as_best(trainer, first_checkpoint_path)
+        self._save_as_best(trainer, first_checkpoint_path, score=0.4567)
 
         trainer.checkpoint = self._checkpoint(2.0)
         trainer.global_step = 2
         second_checkpoint_path = self.root / "best-epoch-2.ckpt"
-        self._save_as_best(trainer, second_checkpoint_path)
+        self._save_as_best(trainer, second_checkpoint_path, score=0.7896)
 
         self.assertEqual(len(self.client.artifacts), 2)
         self.assertEqual(
@@ -215,6 +323,31 @@ class MLFlowBestCheckpointTests(unittest.TestCase):
         self.assertTrue(torch.equal(local_best["weight"], torch.tensor([2.0])))
         self.assertTrue(first_checkpoint_path.exists())
         self.assertTrue(second_checkpoint_path.exists())
+        first_tags = {
+            tag["key"]: tag["value"] for tag in self.client.tags[:9]
+        }
+        self.assertEqual(
+            first_tags,
+            {
+                "classes": ["background", "leaf"],
+                "type": "semantic_segmentation",
+                "arch": "eomt",
+                "encoder": "dinov3l16",
+                "resolution": 512,
+                "train_date": "07-29-2026",
+                "val_metric": "IoU",
+                "val_score": 0.457,
+                "library": "pytorch",
+            },
+        )
+        self.assertEqual(
+            [
+                tag["value"]
+                for tag in self.client.tags
+                if tag["key"] == "val_score"
+            ],
+            [0.457, 0.79],
+        )
 
     def test_does_not_export_non_best_or_last_checkpoint(self) -> None:
         trainer = _FakeTrainer(self._checkpoint(1.0), self.logger)
@@ -231,6 +364,7 @@ class MLFlowBestCheckpointTests(unittest.TestCase):
 
         self.assertFalse((self.root / BEST_ARTIFACT_FILENAME).exists())
         self.assertEqual(self.client.artifacts, [])
+        self.assertEqual(self.client.tags, [])
 
     def test_does_not_export_on_non_global_zero_process(self) -> None:
         trainer = _FakeTrainer(
@@ -245,6 +379,7 @@ class MLFlowBestCheckpointTests(unittest.TestCase):
         self.assertTrue(checkpoint_path.exists())
         self.assertFalse((self.root / BEST_ARTIFACT_FILENAME).exists())
         self.assertEqual(self.client.artifacts, [])
+        self.assertEqual(self.client.tags, [])
 
     def test_fails_when_mlflow_logger_is_missing(self) -> None:
         trainer = _FakeTrainer(self._checkpoint(1.0), logger=None)
@@ -269,12 +404,96 @@ class MLFlowBestCheckpointTests(unittest.TestCase):
         with self.assertRaisesRegex(OSError, "artifact upload failed"):
             self._save_as_best(trainer, self.root / "best.ckpt")
 
+    def test_rejects_tag_metadata_that_does_not_match_model(self) -> None:
+        trainer = _FakeTrainer(self._checkpoint(1.0), self.logger)
+        trainer.lightning_module.img_size = (512, 640)
+        self.callback.best_model_score = torch.tensor(0.5)
+
+        with self.assertRaisesRegex(ValueError, "requires square images"):
+            self.callback._build_tags(cast(Trainer, trainer))
+
+        trainer.lightning_module.img_size = (512, 512)
+        trainer.lightning_module.network.encoder.backbone_name = "unsupported"
+        with self.assertRaisesRegex(ValueError, "Unsupported encoder"):
+            self.callback._build_tags(cast(Trainer, trainer))
+
+    def test_logs_final_best_as_metadata_only_model(self) -> None:
+        trainer = _FakeTrainer(self._checkpoint(1.0), self.logger)
+        checkpoint_path = self.root / "best-epoch-3.ckpt"
+        best_path = self.root / BEST_ARTIFACT_FILENAME
+        checkpoint_path.write_bytes(b"lightning checkpoint")
+        best_path.write_bytes(b"best weights")
+        self.callback.best_model_path = str(checkpoint_path)
+        self.callback.best_model_score = torch.tensor(0.87654)
+
+        with _fake_mlflow_modules() as fake_mlflow:
+            self.callback.on_fit_end(
+                cast(Trainer, trainer),
+                trainer.lightning_module,
+            )
+
+        self.assertEqual(fake_mlflow.tracking_uris, ["databricks"])
+        self.assertEqual(fake_mlflow.started_runs, ["run-123"])
+        self.assertEqual(len(fake_mlflow.pyfunc.logged_models), 1)
+        logged_model = fake_mlflow.pyfunc.logged_models[0]
+        self.assertEqual(logged_model["artifact_path"], "model")
+        self.assertEqual(logged_model["artifacts"], {"best": str(best_path)})
+        self.assertEqual(logged_model["python_model"].pt_file, str(best_path))
+        self.assertEqual(
+            logged_model["pip_requirements"],
+            ["torch>=2.6.0,<2.8.0"],
+        )
+        self.assertEqual(
+            logged_model["metadata"]["val_score"],
+            0.877,
+        )
+        self.assertEqual(
+            logged_model["input_example"].shape,
+            (1, 3, 512, 512),
+        )
+        signature = logged_model["signature"]
+        self.assertEqual(signature.inputs[0].shape, (-1, 3, -1, -1))
+        self.assertEqual(signature.inputs[0].name, "input_tensor")
+        self.assertEqual(signature.outputs[0].shape, (-1, 2, -1, -1))
+        self.assertEqual(signature.outputs[0].name, "output_tensor")
+
+    def test_final_model_logging_requires_best_weights(self) -> None:
+        trainer = _FakeTrainer(self._checkpoint(1.0), self.logger)
+        self.callback.best_model_path = str(self.root / "missing.ckpt")
+
+        with self.assertRaisesRegex(RuntimeError, "Best weights are unavailable"):
+            self.callback.on_fit_end(
+                cast(Trainer, trainer),
+                trainer.lightning_module,
+            )
+
+    def test_final_model_logging_rejects_another_active_run(self) -> None:
+        trainer = _FakeTrainer(self._checkpoint(1.0), self.logger)
+        checkpoint_path = self.root / "best.ckpt"
+        checkpoint_path.write_bytes(b"checkpoint")
+        (self.root / BEST_ARTIFACT_FILENAME).write_bytes(b"best weights")
+        self.callback.best_model_path = str(checkpoint_path)
+        self.callback.best_model_score = torch.tensor(0.5)
+
+        with _fake_mlflow_modules() as fake_mlflow:
+            fake_mlflow._active_run = SimpleNamespace(
+                info=SimpleNamespace(run_id="different-run")
+            )
+            with self.assertRaisesRegex(RuntimeError, "another MLflow run"):
+                self.callback.on_fit_end(
+                    cast(Trainer, trainer),
+                    trainer.lightning_module,
+                )
+
     def _save_as_best(
         self,
         trainer: _FakeTrainer,
         checkpoint_path: Path,
+        *,
+        score: float = 0.5,
     ) -> None:
         self.callback.best_model_path = str(checkpoint_path)
+        self.callback.best_model_score = torch.tensor(score)
         self.callback._save_checkpoint(
             cast(Trainer, trainer),
             str(checkpoint_path),

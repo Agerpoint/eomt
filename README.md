@@ -181,7 +181,9 @@ remains in the configured checkpoint directory for training resume and a
 CPU-loaded state dictionary is saved locally as `best.pt`. The same `best.pt`
 is uploaded at the root of the MLflow run's artifacts, replacing the previous
 best artifact. The run tags record the class names, model variant, square image
-resolution, training date, and latest best validation IoU.
+resolution, training date, and latest best validation IoU. After successful
+training, the final best weights are also packaged once as a metadata-only
+MLflow model under `model/` for Unity Catalog registration.
 
 The schedule calculation assumes one device, no gradient accumulation, and
 the configured batch size. Generate a new config whenever the training dataset
