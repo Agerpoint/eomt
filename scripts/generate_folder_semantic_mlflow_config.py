@@ -127,6 +127,7 @@ def generate_mlflow_config(
     batch_size: int,
     image_size: int,
     num_classes: int,
+    class_names: list[str],
     mlflow_experiment_path: str,
     mlflow_run_name: str,
     output_path: str | Path,
@@ -141,6 +142,7 @@ def generate_mlflow_config(
         batch_size: Single-device training batch size.
         image_size: Square training image dimension.
         num_classes: Number of semantic classes, including background.
+        class_names: Semantic class names ordered by their numeric IDs.
         mlflow_experiment_path: MLflow experiment name or workspace path.
         mlflow_run_name: MLflow run name.
         output_path: Destination ending in ``.yaml`` or ``.yml``.
@@ -160,6 +162,7 @@ def generate_mlflow_config(
         batch_size=batch_size,
         image_size=image_size,
         num_classes=num_classes,
+        class_names=class_names,
         mlflow_experiment_path=mlflow_experiment_path,
         mlflow_run_name=mlflow_run_name,
         output_path=output_path,
@@ -177,6 +180,7 @@ def _prepare_config(
     batch_size: int,
     image_size: int,
     num_classes: int,
+    class_names: list[str],
     mlflow_experiment_path: str,
     mlflow_run_name: str,
     output_path: str | Path,
@@ -188,6 +192,7 @@ def _prepare_config(
         batch_size=batch_size,
         image_size=image_size,
         num_classes=num_classes,
+        class_names=class_names,
         mlflow_experiment_path=mlflow_experiment_path,
         mlflow_run_name=mlflow_run_name,
     )
@@ -211,6 +216,7 @@ def _prepare_config(
         batch_size=batch_size,
         image_size=image_size,
         num_classes=num_classes,
+        class_names=class_names,
         mlflow_experiment_path=mlflow_experiment_path,
         mlflow_run_name=mlflow_run_name,
         schedule=schedule,
@@ -230,6 +236,7 @@ def _validate_parameters(
     batch_size: int,
     image_size: int,
     num_classes: int,
+    class_names: list[str],
     mlflow_experiment_path: str,
     mlflow_run_name: str,
 ) -> None:
@@ -238,6 +245,13 @@ def _validate_parameters(
     _require_positive("image_size", image_size)
     if not 1 <= num_classes <= 255:
         raise ValueError(f"num_classes must be between 1 and 255, got {num_classes}")
+    if len(class_names) != num_classes:
+        raise ValueError(
+            "class_names count must match num_classes: "
+            f"{len(class_names)} != {num_classes}"
+        )
+    for class_name in class_names:
+        _require_text("class_names", class_name)
     _require_text("mlflow_experiment_path", mlflow_experiment_path)
     _require_text("mlflow_run_name", mlflow_run_name)
 
@@ -309,6 +323,7 @@ def _apply_overrides(
     batch_size: int,
     image_size: int,
     num_classes: int,
+    class_names: list[str],
     mlflow_experiment_path: str,
     mlflow_run_name: str,
     schedule: TrainingSchedule,
@@ -321,7 +336,7 @@ def _apply_overrides(
     trainer["max_epochs"] = num_epochs
     logger["experiment_name"] = mlflow_experiment_path
     logger["run_name"] = mlflow_run_name
-    _set_checkpoint_directory(trainer)
+    _configure_checkpoint(trainer, class_names)
     model["attn_mask_annealing_start_steps"] = list(schedule.annealing_starts)
     model["attn_mask_annealing_end_steps"] = list(schedule.annealing_ends)
     model["warmup_steps"] = list(schedule.warmup)
@@ -331,11 +346,15 @@ def _apply_overrides(
     data["num_classes"] = num_classes
 
 
-def _set_checkpoint_directory(trainer: dict[str, Any]) -> None:
+def _configure_checkpoint(
+    trainer: dict[str, Any],
+    class_names: list[str],
+) -> None:
     callbacks = trainer.get("callbacks", [])
     for callback in callbacks:
         if callback.get("class_path") in CHECKPOINT_CALLBACK_CLASS_PATHS:
             callback["init_args"]["dirpath"] = DEFAULT_CHECKPOINT_DIRECTORY
+            callback["init_args"]["class_names"] = list(class_names)
             return
 
     raise ValueError("Template is missing the ModelCheckpoint callback")
@@ -414,6 +433,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, required=True)
     parser.add_argument("--image-size", type=int, required=True)
     parser.add_argument("--num-classes", type=int, required=True)
+    parser.add_argument("--class-names", nargs="+", required=True)
     parser.add_argument("--mlflow-experiment-path", required=True)
     parser.add_argument("--mlflow-run-name", required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -449,6 +469,7 @@ def main(arguments: list[str] | None = None) -> int:
             batch_size=args.batch_size,
             image_size=args.image_size,
             num_classes=args.num_classes,
+            class_names=args.class_names,
             mlflow_experiment_path=args.mlflow_experiment_path,
             mlflow_run_name=args.mlflow_run_name,
             output_path=args.output,

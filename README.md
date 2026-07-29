@@ -158,6 +158,7 @@ python3 -m scripts.generate_folder_semantic_mlflow_config \
   --batch-size 2 \
   --image-size 1280 \
   --num-classes 3 \
+  --class-names background class-one class-two \
   --mlflow-experiment-path /Workspace/Shared/mlflow_experiments/eomt/experiment \
   --mlflow-run-name folder-semantic-large \
   --output configs/dinov3/folder/semantic/my_large_mlflow.yaml
@@ -179,7 +180,8 @@ Whenever the monitored validation IoU improves, the full Lightning checkpoint
 remains in the configured checkpoint directory for training resume and a
 CPU-loaded state dictionary is saved locally as `best.pt`. The same `best.pt`
 is uploaded at the root of the MLflow run's artifacts, replacing the previous
-best artifact.
+best artifact. The run tags record the class names, model variant, square image
+resolution, training date, and latest best validation IoU.
 
 The schedule calculation assumes one device, no gradient accumulation, and
 the configured batch size. Generate a new config whenever the training dataset

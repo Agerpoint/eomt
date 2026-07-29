@@ -8,6 +8,7 @@ trainer:
   callbacks:
     - class_path: training.mlflow_best_checkpoint.MLFlowBestCheckpoint
       init_args:
+        class_names: ["background", "foreground"]
         monitor: "metrics/val_iou_all"
         mode: max
         save_top_k: 1
