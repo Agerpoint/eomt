@@ -44,7 +44,7 @@ def _export_checkpoint(ckpt_path: str | Path, out_path: str | Path) -> None:
 
 
 class MLFlowBestCheckpoint(ModelCheckpoint):
-    """Export and upload the state dict whenever the global best improves."""
+    """Upload improving weights and package the final best as an MLflow model."""
 
     def __init__(
         self,
@@ -109,6 +109,27 @@ class MLFlowBestCheckpoint(ModelCheckpoint):
             for key, value in self._build_tags(trainer).items():
                 logger.experiment.set_tag(run_id, key, value)
 
+    def on_fit_end(self, trainer: Trainer, pl_module) -> None:
+        if not trainer.is_global_zero:
+            return
+
+        if not self.best_model_path:
+            raise RuntimeError("Best checkpoint path is unavailable for model logging")
+        best_path = Path(self.best_model_path).with_name(BEST_ARTIFACT_FILENAME)
+        if not best_path.is_file():
+            raise RuntimeError(
+                f"Best weights are unavailable for model logging: {best_path}"
+            )
+
+        mlflow_loggers = [
+            logger for logger in trainer.loggers if isinstance(logger, MLFlowLogger)
+        ]
+        if not mlflow_loggers:
+            raise RuntimeError("MLFlowBestCheckpoint requires an MLFlowLogger")
+
+        for logger in mlflow_loggers:
+            self._log_final_model(trainer, logger, best_path)
+
     def _build_tags(self, trainer: Trainer) -> dict[str, Any]:
         model = getattr(trainer.lightning_module, "_orig_mod", trainer.lightning_module)
         if len(self.class_names) != model.num_classes:
@@ -148,3 +169,73 @@ class MLFlowBestCheckpoint(ModelCheckpoint):
             "val_score": round(float(best_model_score), 3),
             "library": "pytorch",
         }
+
+    def _log_final_model(
+        self,
+        trainer: Trainer,
+        logger: MLFlowLogger,
+        best_path: Path,
+    ) -> None:
+        import mlflow
+        import numpy as np
+        from mlflow.models.signature import ModelSignature
+        from mlflow.types.schema import Schema, TensorSpec
+
+        from training.mlflow_model import EoMTC
+
+        run_id = logger.run_id
+        if run_id is None:
+            raise RuntimeError("MLFlowLogger did not provide a run ID")
+
+        model = getattr(trainer.lightning_module, "_orig_mod", trainer.lightning_module)
+        resolution = self._build_tags(trainer)["resolution"]
+        signature = ModelSignature(
+            inputs=Schema(
+                [
+                    TensorSpec(
+                        np.dtype("float32"),
+                        shape=(-1, 3, -1, -1),
+                        name="input_tensor",
+                    )
+                ]
+            ),
+            outputs=Schema(
+                [
+                    TensorSpec(
+                        np.dtype("float32"),
+                        shape=(-1, model.num_classes, -1, -1),
+                        name="output_tensor",
+                    )
+                ]
+            ),
+        )
+        input_example = np.random.random(
+            (1, 3, resolution, resolution)
+        ).astype(np.float32)
+
+        tracking_uri = getattr(logger, "_tracking_uri", None)
+        if tracking_uri is not None:
+            mlflow.set_tracking_uri(tracking_uri)
+
+        active_run = mlflow.active_run()
+        if active_run is not None and active_run.info.run_id != run_id:
+            raise RuntimeError(
+                "Cannot log the final model while another MLflow run is active"
+            )
+
+        def log_model() -> None:
+            mlflow.pyfunc.log_model(
+                artifact_path="model",
+                artifacts={"best": str(best_path)},
+                python_model=EoMTC(str(best_path)),
+                signature=signature,
+                metadata=self._build_tags(trainer),
+                input_example=input_example,
+                pip_requirements=["torch>=2.6.0,<2.8.0"],
+            )
+
+        if active_run is not None:
+            log_model()
+        else:
+            with mlflow.start_run(run_id=run_id):
+                log_model()

@@ -158,6 +158,10 @@ class MlflowConfigGeneratorTests(unittest.TestCase):
         )
         checkpoint = checkpoint_callback["init_args"]
         self.assertEqual(
+            checkpoint["class_names"],
+            ["background", "leaf", "fruit"],
+        )
+        self.assertEqual(
             checkpoint["dirpath"],
             "/local_disk0/eomt_checkpoints",
         )
@@ -227,6 +231,11 @@ class MlflowConfigGeneratorTests(unittest.TestCase):
             ({"batch_size": 0}, "batch_size"),
             ({"image_size": 0}, "image_size"),
             ({"num_classes": 0}, "num_classes"),
+            ({"class_names": ["background"]}, "class_names count"),
+            (
+                {"class_names": ["background", "", "fruit"]},
+                "class_names",
+            ),
             ({"mlflow_experiment_path": " "}, "mlflow_experiment_path"),
             ({"mlflow_run_name": ""}, "mlflow_run_name"),
         ]
@@ -321,6 +330,10 @@ class MlflowConfigGeneratorTests(unittest.TestCase):
                 "640",
                 "--num-classes",
                 "3",
+                "--class-names",
+                "background",
+                "leaf",
+                "fruit",
                 "--mlflow-experiment-path",
                 "/Workspace/Shared/test",
                 "--mlflow-run-name",
@@ -372,6 +385,7 @@ class MlflowConfigGeneratorTests(unittest.TestCase):
             "batch_size": 2,
             "image_size": 640,
             "num_classes": 3,
+            "class_names": ["background", "leaf", "fruit"],
             "mlflow_experiment_path": "/Workspace/Shared/test",
             "mlflow_run_name": "test-run",
             "output_path": self.root / "generated.yaml",

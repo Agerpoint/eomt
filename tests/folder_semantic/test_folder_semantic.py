@@ -417,6 +417,14 @@ class FolderSemanticConfigTests(unittest.TestCase):
                     output,
                 )
                 self.assertIn(
+                    "      class_names:",
+                    output,
+                )
+                self.assertIn(
+                    "      - background",
+                    output,
+                )
+                self.assertIn(
                     "experiment_name: "
                     "/Workspace/Shared/mlflow_experiments/eomt/experiment",
                     output,
