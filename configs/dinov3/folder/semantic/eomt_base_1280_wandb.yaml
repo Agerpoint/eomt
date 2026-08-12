@@ -21,6 +21,8 @@ model:
     attn_mask_annealing_start_steps: [0, 8150, 13040]
     attn_mask_annealing_end_steps: [3000, 11410, 16300]
     lr: 2e-4
+    lr_mult: 0.1
+    llrd: 1.0
     llrd_l2_enabled: False
     warmup_steps: [2000, 3000]
     delta_weights: False
