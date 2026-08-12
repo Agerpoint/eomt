@@ -49,6 +49,14 @@ BASE_MLFLOW_CONFIG_PATH = (
     / "semantic"
     / "eomt_base_1280_mlflow.yaml"
 )
+SMALL_MLFLOW_CONFIG_PATH = (
+    REPOSITORY_ROOT
+    / "configs"
+    / "dinov3"
+    / "folder"
+    / "semantic"
+    / "eomt_small_1280_mlflow.yaml"
+)
 
 
 class FolderSemanticDatasetTests(unittest.TestCase):
@@ -393,6 +401,10 @@ class FolderSemanticConfigTests(unittest.TestCase):
 
     def test_mlflow_configs_parse_with_expected_logger_values(self) -> None:
         configs = [
+            (
+                SMALL_MLFLOW_CONFIG_PATH,
+                "folder_semantic_eomt_small_1280_dinov3",
+            ),
             (
                 BASE_MLFLOW_CONFIG_PATH,
                 "folder_semantic_eomt_base_1280_dinov3",

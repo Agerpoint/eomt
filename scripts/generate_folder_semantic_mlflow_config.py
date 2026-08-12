@@ -23,7 +23,7 @@ CHECKPOINT_CALLBACK_CLASS_PATHS = frozenset(
 )
 IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".tif", ".tiff"})
 MASK_SUFFIXES = frozenset({".png"})
-ModelSize = Literal["base", "large"]
+ModelSize = Literal["small", "base", "large"]
 
 
 @dataclass(frozen=True)
@@ -54,6 +54,10 @@ class _PreparedConfig:
 
 
 MODEL_VARIANTS = {
+    "small": _ModelVariant(
+        template_path=CONFIG_DIRECTORY / "eomt_small_1280_mlflow.yaml",
+        num_blocks=3,
+    ),
     "base": _ModelVariant(
         template_path=CONFIG_DIRECTORY / "eomt_base_1280_mlflow.yaml",
         num_blocks=3,
@@ -136,7 +140,7 @@ def generate_mlflow_config(
     """Generate a folder-semantic MLflow config from a model template.
 
     Args:
-        model_size: DINOv3 model variant, either ``base`` or ``large``.
+        model_size: DINOv3 model variant: ``small``, ``base``, or ``large``.
         dataset_path: Root containing ``train/Images`` and ``train/Masks``.
         num_epochs: Number of epochs written to the trainer config.
         batch_size: Single-device training batch size.

@@ -18,6 +18,7 @@ from lightning.pytorch.loggers import MLFlowLogger
 
 BEST_ARTIFACT_FILENAME = "best.pt"
 ENCODER_TAGS = {
+    "facebook/dinov3-vits16-pretrain-lvd1689m": "dinov3s16",
     "facebook/dinov3-vitb16-pretrain-lvd1689m": "dinov3b16",
     "facebook/dinov3-vitl16-pretrain-lvd1689m": "dinov3l16",
 }
@@ -101,12 +102,13 @@ class MLFlowBestCheckpoint(ModelCheckpoint):
         if not mlflow_loggers:
             raise RuntimeError("MLFlowBestCheckpoint requires an MLFlowLogger")
 
+        tags = self._build_tags(trainer)
         for logger in mlflow_loggers:
             run_id = logger.run_id
             if run_id is None:
                 raise RuntimeError("MLFlowLogger did not provide a run ID")
             logger.experiment.log_artifact(run_id, str(out_path))
-            for key, value in self._build_tags(trainer).items():
+            for key, value in tags.items():
                 logger.experiment.set_tag(run_id, key, value)
 
     def on_fit_end(self, trainer: Trainer, pl_module) -> None:
