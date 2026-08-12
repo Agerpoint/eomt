@@ -199,6 +199,23 @@ class MlflowConfigGeneratorTests(unittest.TestCase):
             "facebook/dinov3-vitb16-pretrain-lvd1689m",
         )
 
+    def test_generates_small_config_with_three_block_schedule(self) -> None:
+        """Small generation preserves its backbone and creates three windows."""
+        output_path = self.root / "small.yaml"
+
+        self._generate(model_size="small", output_path=output_path)
+        config = self._load_yaml(output_path)
+
+        model = config["model"]["init_args"]
+        self.assertEqual(model["attn_mask_annealing_start_steps"], [0, 3, 5])
+        self.assertEqual(model["attn_mask_annealing_end_steps"], [3, 5, 8])
+        network = model["network"]["init_args"]
+        self.assertEqual(network["num_blocks"], 3)
+        self.assertEqual(
+            network["encoder"]["init_args"]["backbone_name"],
+            "facebook/dinov3-vits16-pretrain-lvd1689m",
+        )
+
     def test_counts_only_training_images(self) -> None:
         """Validation images do not affect the generated global-step schedule."""
         output_path = self.root / "train-count.yaml"

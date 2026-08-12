@@ -101,6 +101,7 @@ class _FakeTrainer:
         checkpoint: dict[str, Any],
         logger: _FakeMLFlowLogger | None,
         *,
+        backbone_name: str = "facebook/dinov3-vitl16-pretrain-lvd1689m",
         is_global_zero: bool = True,
     ) -> None:
         self.checkpoint = checkpoint
@@ -112,9 +113,7 @@ class _FakeTrainer:
             img_size=(512, 512),
             network=SimpleNamespace(
                 encoder=SimpleNamespace(
-                    backbone_name=(
-                        "facebook/dinov3-vitl16-pretrain-lvd1689m"
-                    )
+                    backbone_name=backbone_name,
                 )
             ),
         )
@@ -416,6 +415,39 @@ class MLFlowBestCheckpointTests(unittest.TestCase):
         trainer.lightning_module.network.encoder.backbone_name = "unsupported"
         with self.assertRaisesRegex(ValueError, "Unsupported encoder"):
             self.callback._build_tags(cast(Trainer, trainer))
+
+    def test_builds_encoder_metadata_for_supported_dinov3_backbones(self) -> None:
+        self.callback.best_model_score = torch.tensor(0.5)
+        cases = {
+            "facebook/dinov3-vits16-pretrain-lvd1689m": "dinov3s16",
+            "facebook/dinov3-vitb16-pretrain-lvd1689m": "dinov3b16",
+            "facebook/dinov3-vitl16-pretrain-lvd1689m": "dinov3l16",
+        }
+
+        for backbone_name, expected_tag in cases.items():
+            with self.subTest(backbone_name=backbone_name):
+                trainer = _FakeTrainer(
+                    self._checkpoint(1.0),
+                    self.logger,
+                    backbone_name=backbone_name,
+                )
+
+                tags = self.callback._build_tags(cast(Trainer, trainer))
+
+                self.assertEqual(tags["encoder"], expected_tag)
+
+    def test_rejects_unsupported_encoder_before_artifact_upload(self) -> None:
+        trainer = _FakeTrainer(
+            self._checkpoint(1.0),
+            self.logger,
+            backbone_name="unsupported",
+        )
+
+        with self.assertRaisesRegex(ValueError, "Unsupported encoder"):
+            self._save_as_best(trainer, self.root / "best.ckpt")
+
+        self.assertEqual(self.client.artifacts, [])
+        self.assertEqual(self.client.tags, [])
 
     def test_logs_final_best_as_metadata_only_model(self) -> None:
         trainer = _FakeTrainer(self._checkpoint(1.0), self.logger)

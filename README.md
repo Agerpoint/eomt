@@ -147,8 +147,8 @@ To fine-tune a pre-trained EoMT model, add:
 
 ### Folder-Semantic MLflow Configs
 
-Generate a dataset-specific DINOv3 MLflow config from the checked-in base or
-large template:
+Generate a dataset-specific DINOv3 MLflow config from the checked-in small,
+base, or large template:
 
 ```bash
 python3 -m scripts.generate_folder_semantic_mlflow_config \
