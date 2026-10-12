@@ -125,10 +125,10 @@ class LightningModule(lightning.LightningModule):
                         is_block = True
 
                 if is_block or block_i == 0:
-                    lr *= self.llrd ** (backbone_blocks - 1 - block_i)
-
-                elif (is_block or block_i == 0) and self.lr_mult != 1.0:
-                    lr *= self.lr_mult
+                    if self.lr_mult != 1.0:
+                        lr *= self.lr_mult
+                    else:
+                        lr *= self.llrd ** (backbone_blocks - 1 - block_i)
 
                 if "backbone.norm" in name:
                     lr = self.lr
