@@ -90,18 +90,53 @@ class MLFlowBestCheckpoint(ModelCheckpoint):
     def _save_checkpoint(self, trainer: Trainer, filepath: str) -> None:
         super()._save_checkpoint(trainer, filepath)
 
-        if not trainer.is_global_zero or filepath != self.best_model_path:
+        # Without a monitor every epoch becomes "best", so uploading here would
+        # push weights each epoch; the final checkpoint is uploaded in on_fit_end.
+        if (
+            not trainer.is_global_zero
+            or self.monitor is None
+            or filepath != self.best_model_path
+        ):
             return
 
         out_path = Path(filepath).with_name(BEST_ARTIFACT_FILENAME)
         _export_checkpoint(filepath, out_path)
+        self._log_weights(trainer, out_path)
 
-        mlflow_loggers = [
-            logger for logger in trainer.loggers if isinstance(logger, MLFlowLogger)
-        ]
-        if not mlflow_loggers:
-            raise RuntimeError("MLFlowBestCheckpoint requires an MLFlowLogger")
+    def on_fit_end(self, trainer: Trainer, pl_module) -> None:
+        if not trainer.is_global_zero:
+            return
 
+        if self.monitor is None:
+            best_path = self._export_final_weights(trainer)
+        else:
+            if not self.best_model_path:
+                raise RuntimeError(
+                    "Best checkpoint path is unavailable for model logging"
+                )
+            best_path = Path(self.best_model_path).with_name(BEST_ARTIFACT_FILENAME)
+        if not best_path.is_file():
+            raise RuntimeError(
+                f"Best weights are unavailable for model logging: {best_path}"
+            )
+
+        for logger in self._mlflow_loggers(trainer):
+            self._log_final_model(trainer, logger, best_path)
+
+    def _export_final_weights(self, trainer: Trainer) -> Path:
+        # save_top_k=1 tracks the latest epoch in best_model_path; save_last
+        # with save_top_k=0 only fills last_model_path.
+        checkpoint_path = self.last_model_path or self.best_model_path
+        if not checkpoint_path:
+            raise RuntimeError("Final checkpoint path is unavailable for model logging")
+
+        out_path = Path(checkpoint_path).with_name(BEST_ARTIFACT_FILENAME)
+        _export_checkpoint(checkpoint_path, out_path)
+        self._log_weights(trainer, out_path)
+        return out_path
+
+    def _log_weights(self, trainer: Trainer, out_path: Path) -> None:
+        mlflow_loggers = self._mlflow_loggers(trainer)
         tags = self._build_tags(trainer)
         for logger in mlflow_loggers:
             run_id = logger.run_id
@@ -111,26 +146,14 @@ class MLFlowBestCheckpoint(ModelCheckpoint):
             for key, value in tags.items():
                 logger.experiment.set_tag(run_id, key, value)
 
-    def on_fit_end(self, trainer: Trainer, pl_module) -> None:
-        if not trainer.is_global_zero:
-            return
-
-        if not self.best_model_path:
-            raise RuntimeError("Best checkpoint path is unavailable for model logging")
-        best_path = Path(self.best_model_path).with_name(BEST_ARTIFACT_FILENAME)
-        if not best_path.is_file():
-            raise RuntimeError(
-                f"Best weights are unavailable for model logging: {best_path}"
-            )
-
+    @staticmethod
+    def _mlflow_loggers(trainer: Trainer) -> list[MLFlowLogger]:
         mlflow_loggers = [
             logger for logger in trainer.loggers if isinstance(logger, MLFlowLogger)
         ]
         if not mlflow_loggers:
             raise RuntimeError("MLFlowBestCheckpoint requires an MLFlowLogger")
-
-        for logger in mlflow_loggers:
-            self._log_final_model(trainer, logger, best_path)
+        return mlflow_loggers
 
     def _build_tags(self, trainer: Trainer) -> dict[str, Any]:
         model = getattr(trainer.lightning_module, "_orig_mod", trainer.lightning_module)
@@ -154,23 +177,24 @@ class MLFlowBestCheckpoint(ModelCheckpoint):
                 f"Unsupported encoder for MLflow tags: {backbone_name}"
             ) from error
 
-        if self.best_model_score is None:
-            raise RuntimeError("Best model score is unavailable for MLflow tags")
-        best_model_score = self.best_model_score
-        if isinstance(best_model_score, torch.Tensor):
-            best_model_score = best_model_score.detach().cpu().item()
-
-        return {
+        tags: dict[str, Any] = {
             "classes": list(self.class_names),
             "type": "semantic_segmentation",
             "arch": "eomt",
             "encoder": encoder,
             "resolution": height,
             "train_date": self.train_date,
-            "val_metric": "IoU",
-            "val_score": round(float(best_model_score), 3),
-            "library": "pytorch",
         }
+        if self.monitor is not None:
+            if self.best_model_score is None:
+                raise RuntimeError("Best model score is unavailable for MLflow tags")
+            best_model_score = self.best_model_score
+            if isinstance(best_model_score, torch.Tensor):
+                best_model_score = best_model_score.detach().cpu().item()
+            tags["val_metric"] = "IoU"
+            tags["val_score"] = round(float(best_model_score), 3)
+        tags["library"] = "pytorch"
+        return tags
 
     def _log_final_model(
         self,

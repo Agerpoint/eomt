@@ -5,6 +5,7 @@
 
 
 import os
+import shutil
 import subprocess
 import sys
 import unittest
@@ -377,6 +378,24 @@ class FolderSemanticDataModuleTests(unittest.TestCase):
         self.assertEqual(len(val_images), 1)
         self.assertEqual(len(val_targets), 1)
         self.assertIsInstance(val_images[0], torch.Tensor)
+
+    def test_missing_val_split_disables_validation(self) -> None:
+        shutil.rmtree(self.root / "val")
+        data_module = FolderSemantic(path=self.root, num_workers=0, batch_size=1)
+
+        data_module.setup("fit")
+
+        self.assertIsNone(data_module.val_dataset)
+        self.assertEqual(data_module.val_dataloader(), [])
+
+    def test_empty_val_split_is_still_rejected(self) -> None:
+        shutil.rmtree(self.root / "val")
+        (self.root / "val" / "Images").mkdir(parents=True)
+        (self.root / "val" / "Masks").mkdir(parents=True)
+        data_module = FolderSemantic(path=self.root, num_workers=0, batch_size=1)
+
+        with self.assertRaisesRegex(ValueError, "No image/mask pairs found"):
+            data_module.setup("fit")
 
 
 class FolderSemanticConfigTests(unittest.TestCase):

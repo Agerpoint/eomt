@@ -4,6 +4,7 @@
 # ---------------------------------------------------------------
 
 
+import logging
 from pathlib import Path
 from typing import Callable
 
@@ -238,11 +239,18 @@ class FolderSemantic(LightningDataModule):
             transforms=self.transforms,
             **dataset_kwargs,
         )
-        self.val_dataset = FolderSemanticDataset(
-            image_dir=dataset_root / "val" / "Images",
-            mask_dir=dataset_root / "val" / "Masks",
-            **dataset_kwargs,
-        )
+        # An absent val/ split means train-only; an existing but broken one
+        # still fails validation below so typos don't silently skip eval.
+        val_root = dataset_root / "val"
+        self.val_dataset = None
+        if val_root.exists():
+            self.val_dataset = FolderSemanticDataset(
+                image_dir=val_root / "Images",
+                mask_dir=val_root / "Masks",
+                **dataset_kwargs,
+            )
+        else:
+            logging.info(f"No val split found at {val_root}; validation is disabled")
 
         return self
 
@@ -255,7 +263,11 @@ class FolderSemantic(LightningDataModule):
             **self.dataloader_kwargs,
         )
 
-    def val_dataloader(self) -> DataLoader:
+    def val_dataloader(self) -> DataLoader | list:
+        # Lightning treats an empty list as "no validation" and skips the loop.
+        if self.val_dataset is None:
+            return []
+
         return DataLoader(
             self.val_dataset,
             collate_fn=self.eval_collate,

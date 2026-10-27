@@ -541,5 +541,104 @@ class MLFlowBestCheckpointTests(unittest.TestCase):
         }
 
 
+class MLFlowBestCheckpointWithoutMonitorTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary_directory = TemporaryDirectory()
+        self.root = Path(self.temporary_directory.name)
+        self.client = _RecordingMlflowClient()
+        self.logger = _FakeMLFlowLogger(self.client)
+        self.callback = MLFlowBestCheckpoint(
+            class_names=["background", "leaf"],
+            dirpath=self.root,
+        )
+        self.callback.train_date = "07-29-2026"
+
+    def tearDown(self) -> None:
+        self.temporary_directory.cleanup()
+
+    def test_does_not_upload_per_epoch_checkpoints(self) -> None:
+        trainer = _FakeTrainer(
+            MLFlowBestCheckpointTests._checkpoint(1.0),
+            self.logger,
+        )
+        checkpoint_path = self.root / "epoch=0.ckpt"
+        self.callback.best_model_path = str(checkpoint_path)
+
+        self.callback._save_checkpoint(cast(Trainer, trainer), str(checkpoint_path))
+
+        self.assertTrue(checkpoint_path.exists())
+        self.assertFalse((self.root / BEST_ARTIFACT_FILENAME).exists())
+        self.assertEqual(self.client.artifacts, [])
+
+    def test_logs_final_checkpoint_without_val_tags_at_fit_end(self) -> None:
+        trainer = _FakeTrainer(
+            MLFlowBestCheckpointTests._checkpoint(3.0),
+            self.logger,
+        )
+        checkpoint_path = self.root / "epoch=49.ckpt"
+        trainer.save_checkpoint(str(checkpoint_path))
+        self.callback.best_model_path = str(checkpoint_path)
+
+        with _fake_mlflow_modules() as fake_mlflow:
+            self.callback.on_fit_end(
+                cast(Trainer, trainer),
+                trainer.lightning_module,
+            )
+
+        best_path = self.root / BEST_ARTIFACT_FILENAME
+        self.assertEqual(len(self.client.artifacts), 1)
+        self.assertEqual(
+            self.client.artifacts[0]["filename"],
+            BEST_ARTIFACT_FILENAME,
+        )
+        self.assertTrue(
+            torch.equal(
+                self.client.artifacts[0]["state_dict"]["weight"],
+                torch.tensor([3.0]),
+            )
+        )
+        tag_keys = {tag["key"] for tag in self.client.tags}
+        self.assertNotIn("val_metric", tag_keys)
+        self.assertNotIn("val_score", tag_keys)
+        self.assertIn("encoder", tag_keys)
+        logged_model = fake_mlflow.pyfunc.logged_models[0]
+        self.assertEqual(logged_model["artifacts"], {"best": str(best_path)})
+        self.assertNotIn("val_score", logged_model["metadata"])
+
+    def test_uses_last_checkpoint_when_no_top_k_checkpoint_exists(self) -> None:
+        trainer = _FakeTrainer(
+            MLFlowBestCheckpointTests._checkpoint(5.0),
+            self.logger,
+        )
+        last_path = self.root / "last.ckpt"
+        trainer.save_checkpoint(str(last_path))
+        self.callback.last_model_path = str(last_path)
+
+        with _fake_mlflow_modules():
+            self.callback.on_fit_end(
+                cast(Trainer, trainer),
+                trainer.lightning_module,
+            )
+
+        local_weights = torch.load(
+            self.root / BEST_ARTIFACT_FILENAME,
+            map_location="cpu",
+            weights_only=True,
+        )
+        self.assertTrue(torch.equal(local_weights["weight"], torch.tensor([5.0])))
+
+    def test_fit_end_requires_a_saved_checkpoint(self) -> None:
+        trainer = _FakeTrainer(
+            MLFlowBestCheckpointTests._checkpoint(1.0),
+            self.logger,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Final checkpoint path"):
+            self.callback.on_fit_end(
+                cast(Trainer, trainer),
+                trainer.lightning_module,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

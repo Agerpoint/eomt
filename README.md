@@ -184,6 +184,24 @@ resolution, training date, and latest best validation IoU. After successful
 training, the final best weights are also packaged once as a metadata-only
 MLflow model under `model/` for Unity Catalog registration.
 
+To train without validation (for example, a fixed number of epochs keeping the
+final weights), omit the `val/` directory from the dataset and remove the
+monitor from the checkpoint callback:
+
+```yaml
+    - class_path: training.mlflow_best_checkpoint.MLFlowBestCheckpoint
+      init_args:
+        class_names: ["background", "foreground"]
+        monitor: null
+        filename: "{epoch}"
+```
+
+The `FolderSemantic` data module skips validation when `val/` does not exist; a
+`val/` directory that exists but has no usable pairs is still an error. Without
+a monitor, nothing is uploaded during training. When training finishes, the
+final-epoch checkpoint is exported as `best.pt`, uploaded, and packaged as the
+MLflow model, and the `val_metric` and `val_score` tags are omitted.
+
 The schedule calculation assumes one device, no gradient accumulation, and
 the configured batch size. Generate a new config whenever the training dataset
 size, batch size, or epoch count changes.
